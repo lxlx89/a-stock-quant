@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "code": "300394",
+    "name": "天孚通信",
+    "direction": "buy",
+    "price": 373.543,
+    "shares": 1000,
+    "cost": 373543.0,
+    "date": "2026-05-14 09:30",
+    "reason": "加仓至1000股",
+    "status": "open"
+  },
+  {
+    "id": 2,
+    "code": "600330",
+    "name": "天通股份",
+    "direction": "buy",
+    "price": 34.379,
+    "shares": 6000,
+    "cost": 206274.0,
+    "date": "2026-05-13 09:30",
+    "reason": "前期买入",
+    "status": "open"
+  },
+  {
+    "id": 3,
+    "code": "002342",
+    "name": "巨力索具",
+    "direction": "buy",
+    "price": 24.868,
+    "shares": 8700,
+    "cost": 216351.6,
+    "date": "2026-05-13 09:30",
+    "reason": "减仓至8700股",
+    "status": "open"
+  },
+  {
+    "id": 4,
+    "code": "301308",
+    "name": "江波龙",
+    "direction": "buy",
+    "price": 393.758,
+    "shares": 200,
+    "cost": 78751.6,
+    "date": "2026-05-13 09:30",
+    "reason": "减仓至200股",
+    "status": "open"
+  }
+]
