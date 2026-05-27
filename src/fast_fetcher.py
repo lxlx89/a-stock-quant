@@ -306,3 +306,184 @@ def fetch_realtime_quotes_cache():
         return None, "缓存文件为空"
     except Exception as e:
         return None, f"缓存读取失败: {e}"
+
+
+# ============================================================
+# Tencent 数据源（qt.gtimg.cn）
+# ============================================================
+
+TENCENT_API = 'http://qt.gtimg.cn/q='
+TENCENT_BATCH_SIZE = 50
+TENCENT_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Referer': 'https://stock.qq.com/',
+}
+
+# Tencent API 字段索引
+_T_IDX = {
+    'market': 0, 'name': 1, 'code': 2, 'price': 3, 'prev_close': 4,
+    'open': 5, 'vol_lots': 6, 'high': 33, 'low': 34,
+    'change_pct': 31, 'change_amt': 32, 'turnover': 38,
+    'pe': 39, 'pb': 46, 'amplitude': 43,
+    'mkt_cap': 44, 'circ_mkt_cap': 45, 'amount_wan': 57,
+}
+
+
+def _fetch_tencent_batch(codes):
+    """抓取一批腾讯行情数据"""
+    if not codes:
+        return []
+    url = TENCENT_API + ','.join(codes)
+    try:
+        resp = requests.get(url, headers=TENCENT_HEADERS, timeout=15)
+        text = resp.content.decode('gbk', errors='replace')
+    except Exception:
+        return []
+
+    results = []
+    for line in text.strip().split(';'):
+        line = line.strip()
+        if not line or '=' not in line:
+            continue
+        try:
+            code_str = line[2:line.index('=')]
+            start = line.index('"') + 1
+            end = line.rindex('"')
+            fields = line[start:end].split('~')
+            if len(fields) < 46:
+                continue
+            results.append({
+                'code_raw': code_str,
+                'fields': fields,
+            })
+        except (ValueError, IndexError):
+            continue
+    return results
+
+
+def _parse_tencent(results):
+    """将腾讯原始数据转为标准 DataFrame"""
+    if not results:
+        return pd.DataFrame()
+
+    rows = []
+    for r in results:
+        fields = r['fields']
+        try:
+            code = fields[_T_IDX['code']]
+            market = fields[_T_IDX['market']]
+            prefix = {'1': 'sh', '51': 'sz'}.get(market, market)
+            price = float(fields[_T_IDX['price']]) if fields[_T_IDX['price']] else None
+            prev_close = float(fields[_T_IDX['prev_close']]) if fields[_T_IDX['prev_close']] else None
+            if price is None or price <= 0:
+                continue
+
+            # 成交量：手 → 股
+            vol_lots = float(fields[_T_IDX['vol_lots']]) if fields[_T_IDX['vol_lots']] else 0
+            volume = vol_lots * 100
+
+            # 成交额：万元 → 元
+            amt_wan = float(fields[_T_IDX['amount_wan']]) if _T_IDX['amount_wan'] < len(fields) and fields[_T_IDX['amount_wan']] else 0
+            amount = amt_wan * 10000
+
+            # 总市值/流通市值：亿 → 元
+            mkt_cap = float(fields[_T_IDX['mkt_cap']]) * 1e8 if fields[_T_IDX['mkt_cap']] else 0
+            circ_cap = float(fields[_T_IDX['circ_mkt_cap']]) * 1e8 if fields[_T_IDX['circ_mkt_cap']] else 0
+
+            change_pct = float(fields[_T_IDX['change_pct']]) if fields[_T_IDX['change_pct']] else 0
+            change_amt = float(fields[_T_IDX['change_amt']]) if fields[_T_IDX['change_amt']] else 0
+            turnover = float(fields[_T_IDX['turnover']]) if fields[_T_IDX['turnover']] else 0
+            pe = float(fields[_T_IDX['pe']]) if fields[_T_IDX['pe']] else 0
+            pb = float(fields[_T_IDX['pb']]) if _T_IDX['pb'] < len(fields) and fields[_T_IDX['pb']] else 0
+            amp = float(fields[_T_IDX['amplitude']]) if _T_IDX['amplitude'] < len(fields) and fields[_T_IDX['amplitude']] else 0
+            high = float(fields[_T_IDX['high']]) if fields[_T_IDX['high']] else price
+            low = float(fields[_T_IDX['low']]) if fields[_T_IDX['low']] else price
+            open_p = float(fields[_T_IDX['open']]) if fields[_T_IDX['open']] else price
+            name = fields[_T_IDX['name']]
+
+            # 振幅回退计算
+            if amp <= 0 and prev_close and prev_close > 0:
+                amp = round((high - low) / prev_close * 100, 2)
+
+            rows.append({
+                '代码': f'{prefix}{code}',
+                '名称': name,
+                '最新价': price,
+                '今开': open_p,
+                '最高': high,
+                '最低': low,
+                '昨收': prev_close or price,
+                '成交量': volume,
+                '成交额': amount,
+                '涨跌幅': change_pct,
+                '涨跌额': change_amt,
+                '换手率': turnover,
+                '市盈率': pe,
+                '市净率': pb,
+                '总市值': mkt_cap,
+                '流通市值': circ_cap,
+                '振幅': amp,
+                '量比': float('nan'),
+                '板块': '',
+            })
+        except (ValueError, IndexError, TypeError):
+            continue
+
+    return pd.DataFrame(rows)
+
+
+def fetch_realtime_quotes_tencent():
+    """
+    快速获取 A 股全市场实时行情（腾讯 qt.gtimg.cn 数据源）
+
+    5500+ 股票，50只/批，10线程并行，预计 < 10秒
+
+    返回：
+        (pandas.DataFrame, None): 成功
+        (None, str): 失败
+    """
+    print("  正在从腾讯 qt.gtimg.cn 抓取全市场实时行情...")
+    print("  （50只/批，10线程并行）")
+
+    start_time = time.time()
+
+    try:
+        codes = _load_cached_codes()
+        if not codes:
+            return None, "股票代码缓存不存在，请先运行 Sina 源生成缓存"
+
+        print(f"  [缓存] {len(codes)} 个股票代码")
+
+        # 分批
+        batches = []
+        for i in range(0, len(codes), TENCENT_BATCH_SIZE):
+            batches.append(codes[i:i + TENCENT_BATCH_SIZE])
+
+        # 并行抓取
+        all_results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(_fetch_tencent_batch, b): b for b in batches}
+            for future in as_completed(futures):
+                try:
+                    data = future.result()
+                    if data:
+                        all_results.extend(data)
+                except Exception:
+                    pass
+
+        if not all_results:
+            return None, "腾讯数据源无返回数据"
+
+        df = _parse_tencent(all_results)
+
+        # 更新缓存
+        if '代码' in df.columns and len(df) > 0:
+            _save_cached_codes(df['代码'].tolist())
+
+        elapsed = time.time() - start_time
+        print(f"  抓取完成，耗时 {elapsed:.1f} 秒（{len(df)} 只股票）")
+
+        return df, None
+
+    except Exception as e:
+        return None, f"腾讯数据源异常: {e}"

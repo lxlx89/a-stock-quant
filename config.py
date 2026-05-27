@@ -35,8 +35,8 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # AKShare 实时行情接口
 DATA_FETCHER_FUNC = 'stock_zh_a_spot_em'   # 目前使用这个接口获取全市场行情
 
-# 数据源 Fallback 顺序: sina -> eastmoney -> cache
-DATA_SOURCE_ORDER = ['sina', 'eastmoney', 'cache']
+# 数据源 Fallback 顺序: sina -> tencent -> eastmoney -> cache
+DATA_SOURCE_ORDER = ['sina', 'tencent', 'eastmoney', 'cache']
 DATA_CACHE_FILE = os.path.join(BASE_DIR, 'data', 'cache', 'last_quotes.parquet')
 DATA_CACHE_MAX_AGE_HOURS = 4  # 缓存数据最大有效期（小时）
 

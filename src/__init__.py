@@ -1,7 +1,7 @@
 """src 包初始化文件"""
 
 # 数据源内部函数
-from .fast_fetcher import fetch_realtime_quotes_sina, fetch_realtime_quotes_cache
+from .fast_fetcher import fetch_realtime_quotes_sina, fetch_realtime_quotes_tencent, fetch_realtime_quotes_cache
 from .data_fetcher import (
     fetch_realtime_quotes_eastmoney,
     fetch_history_kline,
@@ -26,6 +26,7 @@ def fetch_realtime_quotes():
 
     sources = {
         'sina': fetch_realtime_quotes_sina,
+        'tencent': fetch_realtime_quotes_tencent,
         'eastmoney': fetch_realtime_quotes_eastmoney,
         'cache': fetch_realtime_quotes_cache,
     }
