@@ -1,12 +1,12 @@
 # 迅股股 · 量化选股系统 交接文档
 
-> 作者：刘迅 | 版本 v7.0 | 2026-05-14 | http://47.113.189.191
+> 作者：刘迅 | 版本 v7.1 | 2026-05-28 | https://lhz456.xyz
 
 ---
 
 ## 一、系统概述
 
-A股 T+1 模拟盘（东方财富杯）量化选股系统，6大策略 + Web面板 + 截图识别持仓。
+A股 T+1 模拟盘（东方财富杯）量化选股系统，**6 策略** + Web 面板 + 截图识别持仓 + GitHub 自动同步。
 
 - **早盘推荐**（9:25）：强势股筛选，排除涨停
 - **午间分析**（11:30）：持仓诊断 + 下午策略
@@ -23,183 +23,258 @@ A股 T+1 模拟盘（东方财富杯）量化选股系统，6大策略 + Web面�
 
 | 文件 | 职责 | 关键函数 |
 |------|------|----------|
-| `src/fast_fetcher.py` | 主数据源，Sina API 10线程并发（4.5秒） | `fetch_realtime_quotes()` |
-| `src/data_fetcher.py` | 备用数据源，AKShare | `fetch_history_kline()` |
+| `src/fast_fetcher.py` | 主数据源：Sina + **Tencent(qt.gtimg.cn)** + Cache | `fetch_realtime_quotes_sina()`, `fetch_realtime_quotes_tencent()`, `fetch_realtime_quotes_cache()` |
+| `src/data_fetcher.py` | 备用数据源：AKShare/Eastmoney | `fetch_realtime_quotes_eastmoney()`, `fetch_history_kline()` |
+| `src/__init__.py` | **多数据源 Fallback 链**：sina → tencent → eastmoney → cache | `fetch_realtime_quotes()` |
 | `src/stock_filter.py` | 清洗 + V2七维评分 + 一夜持股五重筛选 | `build_watchlist()`, `calculate_score_v2()`, `filter_overnight_candidates()` |
 | `src/risk_control.py` | 风控评估 + 涨停检测 + 量能异常 | `assess_risks()`, `check_limit_up_risk()` |
-| `src/strategy.py` | 策略引擎：买卖信号 + 三大推荐 | `generate_buy_signals()`, `generate_sell_signals()`, `generate_morning_recommendation()`, `generate_overnight_recommendation()` |
+| `src/strategy.py` | 策略引擎：买卖信号 + 三大推荐 | `generate_buy_signals()`, `generate_sell_signals()`, `generate_morning_recommendation()` |
+| `src/db.py` | PostgreSQL 持久化（可选）+ JSON 回退 | `save_trade()`, `load_trades()` |
+| `src/market_regime.py` | 市场状态识别（牛市/熊市/震荡） | |
 | `src/exporter.py` | Excel 导出（3 Sheet） | `export_to_excel()` |
 | `src/utils.py` | 日志、格式化、交易时间判断 | `save_log()`, `is_trading_time()` |
-| `src/network_diag.py` | 网络诊断（独立运行） | `run_diagnostic()` |
 
 ### 根目录脚本
 
 | 文件 | 用途 |
 |------|------|
-| `main.py` | 本地7步管线（抓取→清洗→筛选→V2评分→风控→买卖信号→Excel） |
+| `main.py` | 本地7步管线 |
 | `auto_morning.py` | 早盘自动推送（服务器 cron 9:25） |
-| `backtest.py` | T+1策略回测 v2.0（Sharpe/最大回撤/Calmar），用法 `python backtest.py --days 30 --top 10` |
-| `backtest_overnight.py` | 一夜持股专项回测（5/12→5/13 结果：止盈触发率 80%） |
-| `overnight_test.py` | 一夜持股模拟交易 + 次日卖出场景分析 |
-| `journal.py` | 交易日志 CLI：`python journal.py add/close/list/history` |
-| `track.py` | 盘中持仓盈亏追踪：`python track.py 代码:成本:股数` |
-| `monitor.py` | 单股价监控 + Windows弹窗 + QQ推送 |
-| `config.py` | **集中配置文件**（筛选规则/评分权重/风控阈值/卖出规则/一夜持股参数/千问API Key） |
+| `backtest.py` | T+1策略回测 v2.0 |
+| `config.py` | **集中配置文件**（数据源顺序/评分权重/风控阈值/API Key） |
+| `deploy_now.py` | 本地一键部署（SSH→SFTP→Docker重建）**[不提交Git]** |
 
 ### Web 服务 `deploy/`
 
 | 文件 | 说明 |
 |------|------|
-| `deploy/app.py` | **FastAPI 主程序**，全部 API + HTML 面板（~600行） |
-| `deploy/deploy.sh` | 服务器 Docker 部署 |
-| `deploy/upload.sh` | 本地上传脚本（scp） |
-| `deploy/docker-compose.yml` | Docker Compose（app+nginx+postgres） |
-| `deploy/nginx/nginx.conf` | Nginx 反向代理配置 |
-| `deploy/requirements.txt` | 服务器 Python 依赖 |
-
-### 数据文件 `data/`
-
-| 路径 | 说明 |
-|------|------|
-| `data/trades.json` | 当前持仓（JSON） |
-| `data/trade_history.json` | 历史交易记录 |
-| `data/cache/stock_codes.json` | 股票代码缓存（6h TTL, ~5500只） |
-| `data/outputs/` | Excel 导出 |
-| `data/logs/run.log` | 运行日志 |
-
-### 文档
-
-| 文件 | 说明 |
-|------|------|
-| `HANDOFF.md` | **本文档**，完整交接说明 |
-| `README.md` | 原始说明 |
-| `REPORT.md` | 技术报告 |
+| `deploy/app.py` | **FastAPI 主程序**，6策略 API + HTML 面板（~900行） |
+| `deploy/Dockerfile` | Docker 镜像（python:3.10-slim + uvicorn） |
+| `deploy/docker-compose.yml` | Docker Compose（app + nginx + postgres） |
+| `deploy/nginx/nginx.conf` | Nginx 反向代理（lhz456.xyz → app:8000） |
+| `deploy/requirements.txt` | **服务器 Python 依赖**（含 akshare, python-multipart） |
+| `deploy/update.sh` | **服务器端一键更新脚本**（git pull + Docker rebuild） |
 
 ---
 
-## 三、服务器部署
+## 三、服务器部署（2026-05-28 重构）
 
-- **IP**: 47.113.189.191
-- **端口**: 80 (HTTP)
-- **系统**: Ubuntu 22.04 (Aliyun ECS)
-- **服务名**: `quant` (systemd)
+### 服务器信息
+- **IP**: 47.113.189.191 | **域名**: lhz456.xyz
+- **系统**: Ubuntu 22.04 (Aliyun ECS, 深圳)
 - **项目目录**: `/opt/quant`
-- **Python**: 3.10 (系统)
+- **部署方式**: Docker Compose（**不再是 systemd**）
+
+### Docker 服务
+
+| 容器 | 端口 | 说明 |
+|------|------|------|
+| quant-app | 8000 (内部) | FastAPI + uvicorn |
+| quant-nginx | 80, 443 | Nginx 反向代理 |
+| quant-db | 5432 (127.0.0.1) | PostgreSQL 16 (可选, DB_ENABLED=false) |
 
 ### 管理命令
 
 ```bash
-systemctl restart quant      # 重启服务
-systemctl status quant       # 查看状态
-journalctl -u quant -n 30    # 最近30条日志
-crontab -l                   # 查看定时任务
+# 查看服务状态
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# 重启单个服务
+cd /opt/quant && docker compose -f deploy/docker-compose.yml restart app
+
+# 重建并重启（代码更新后）
+cd /opt/quant && docker compose -f deploy/docker-compose.yml up -d --build app
+
+# 查看日志
+docker logs quant-app --tail 50
+
+# 健康检查
+curl http://localhost/api/health
 ```
 
-### 定时任务
+### 定时任务（crontab）
 
 ```
-25 1 * * 1-5   /usr/bin/python3 /opt/quant/auto_morning.py     # 09:25 早盘
-30 14 * * 1-5  curl -s -X POST http://localhost/api/overnight   # 14:30 一夜持股
+25 1 * * 1-5  cd /opt/quant && /usr/bin/python3 /opt/quant/auto_morning.py >> /opt/quant/data/morning_cron.log 2>&1
+30 14 * * 1-5  curl -s -X POST http://localhost/api/overnight > /dev/null 2>&1
 ```
 
-### 部署步骤
-
-```bash
-# 本地推送到服务器
-scp config.py main.py auto_morning.py backtest.py root@47.113.189.191:/opt/quant/
-scp src/*.py root@47.113.189.191:/opt/quant/src/
-scp deploy/app.py root@47.113.189.191:/opt/quant/deploy/
-
-# 服务器上重启
-ssh root@47.113.189.191 "systemctl restart quant"
-```
+**注意**: auto_morning.py 在主机运行（不经过Docker），依赖主机 Python3 + 依赖包。
 
 ---
 
-## 四、API 端点
+## 四、数据源架构（重要!）
+
+### Fallback 链
+
+```
+sina (vip.stock.finance.sina.com.cn, 并行, ~5s)
+  ↓ 失败
+tencent (qt.gtimg.cn, 并行, ~8s)      ← 2026-05-28 新增
+  ↓ 失败
+eastmoney (akshare, ~30s)
+  ↓ 失败
+cache (本地 parquet, 4h TTL)
+```
+
+### 数据源详情
+
+| 数据源 | API | 格式 | 速度 | 阿里云可用? |
+|--------|-----|------|------|-------------|
+| Sina | `vip.stock.finance.sina.com.cn` | JSON | ~5s | **否**（被Sina防火墙拦截） |
+| **Tencent** | `qt.gtimg.cn` | GBK文本 (`~`分隔) | ~8s | **是！** |
+| Eastmoney | akshare → `push2.eastmoney.com` | DataFrame | ~30s | **否**（连接被拒） |
+| Cache | 本地 parquet | DataFrame | 即时 | 是（过期4h后无用） |
+
+### 腾讯数据源字段映射
+
+Tencent API 返回 88 字段，关键索引：
+```
+[3]=最新价 [4]=昨收 [5]=今开 [6]=成交量(手) [31]=涨跌幅
+[32]=涨跌额 [33]=最高 [34]=最低 [38]=换手率 [39]=市盈率
+[43]=振幅 [44]=总市值(亿) [45]=流通市值(亿) [46]=市净率
+[57]=成交额(万)
+```
+
+实现在 `src/fast_fetcher.py` 的 `fetch_realtime_quotes_tencent()`。
+
+---
+
+## 五、GitHub 同步工作流（2026-05-28 新增）
+
+### 仓库
+- **地址**: https://github.com/lxlx89/a-stock-quant (私有)
+- **分支**: `main`
+- **认证**: SSH Key（本地 + 服务器 Deploy Key）
+
+### 日常更新流程
+
+```bash
+# 1. 本地修改代码后
+git add .
+git commit -m "描述改动"
+git push
+
+# 2. 服务器拉取并重建
+ssh root@47.113.189.191 "cd /opt/quant && bash deploy/update.sh"
+```
+
+`deploy/update.sh` 做了：
+1. `git pull origin main` — 拉取最新代码
+2. `docker compose build app` — 重建 Docker 镜像
+3. `docker compose up -d` — 重启服务
+4. 健康检查
+
+### 注意事项
+- `.env` 和 `data/` 目录在 `.gitignore` 中，不会被覆盖
+- `deploy_now.py` 不在 Git 中（含密码），仅本地使用
+- 服务器初次设置部署密钥：https://github.com/lxlx89/a-stock-quant/settings/keys
+
+---
+
+## 六、部署排障记录（2026-05-28）
+
+### 问题 1：端口 80 被占用
+**现象**: Docker nginx 无法启动 `address already in use`
+**原因**: 旧的 `systemd quant` 服务直接在主机运行 `uvicorn --port 80`
+**解决**: `systemctl stop quant && systemctl disable quant`
+
+### 问题 2：Docker 镜像缺少依赖
+**现象**: `RuntimeError: Form data requires "python-multipart"`
+**修复**: 添加到 `deploy/requirements.txt`
+
+### 问题 3：Dockerfile 复制错 requirements.txt
+**现象**: 复制的是根目录 `requirements.txt`（本地依赖），缺 `fastapi`/`uvicorn`
+**修复**: 改为 `COPY deploy/requirements.txt`
+
+### 问题 4：所有数据源在服务器上失败
+**现象**: Sina 返回 Forbidden，Eastmoney 连接被拒
+**根因**: 阿里云 ECS 的 IP 被 Sina/Eastmoney 防火墙限制
+**解决**: 新增腾讯 `qt.gtimg.cn` 数据源作为主要回退
+
+### 问题 5：akshare 不在服务器依赖中
+**现象**: Eastmoney 回退失败 "未安装 akshare 库"
+**修复**: 添加 `akshare>=1.10.0` 到 `deploy/requirements.txt`
+
+---
+
+## 七、API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/health` | 健康检查 |
-| POST | `/api/morning` | 早盘推荐 |
-| POST | `/api/midday` | 午间分析 |
-| POST | `/api/overnight` | 一夜持股法 |
-| POST | `/api/strategy/high-turnover` | 高换手猎手 |
-| POST | `/api/strategy/oversold-bounce` | 低吸抄底 |
-| POST | `/api/strategy/breakout` | 突破追涨 |
-| POST | `/api/upload-positions` | 截图识别持仓（千问VL → OCR四层回退） |
+| GET | `/api/health` | 健康检查 `{"status":"ok","version":"7.0"}` |
+| POST | `/api/morning` | 早盘推荐（集合竞价后精选，排除涨停） |
+| POST | `/api/midday` | 午间分析（持仓诊断 + 下午建议） |
+| POST | `/api/overnight` | 一夜持股法（尾盘精选 + 明日卖出计划） |
+| POST | `/api/strategy/high-turnover` | 高换手猎手（换手5-15%，涨幅2-5%） |
+| POST | `/api/strategy/oversold-bounce` | 低吸抄底（跌幅2-7%，博次日反弹） |
+| POST | `/api/strategy/breakout` | 突破追涨（放量上攻+强势收盘） |
+| POST | `/api/upload-positions` | 截图识别持仓（千问VL → OCR三层回退） |
 | POST | `/api/positions/update` | 手动JSON更新持仓 |
-| GET | `/api/result/{mode}` | 获取缓存结果 |
+| GET | `/api/result/{mode}` | 获取上次缓存结果 |
 
 ---
 
-## 五、六大策略参数速查
+## 八、图片识别持仓（四层回退）
 
-### 1. 早盘推荐
-涨幅 >= 2%, 成交额 >= 1亿, 换手率 >= 1%, 振幅 <= 15%
-排除：涨停板（主板 10%/创业板 20%×95%阈值）、涨幅 > 8%
-评分：V2七维（涨跌幅25%+成交额20%+换手率15%+振幅10%+量比10%+趋势10%+市值10%）
+1. **千问 VL** (qwen-vl-max) — AI视觉识别，最准
+2. **Tesseract OCR 原始** — 直接 OCR
+3. **Tesseract OCR 增强** — 灰度 + 对比度增强 + 锐化
+4. **Tesseract OCR 模糊匹配** — 多 PSM 模式 + 宽松正则
 
-### 2. 午间分析
-上午复盘总结 + 热点板块 + 持仓每只诊断 + 下午操作建议
+识别后数据校验：代码格式(6位, 00/30/60/68开头)、成本范围(0.5-5000)、股数范围(100-10M)
 
-### 3. 一夜持股法
-涨幅 3%-5%, 换手率(主板>=3%/创业板>=5%, <=20%), 振幅 <=12%, 收盘/最高 >=94%
-**次日**: 10:30前卖, 止盈+2%, 止损-1.5%, 低开>3%立刻离场
-**回测**: 止盈触发率 80% (8/10)
-
-### 4. 高换手猎手
-换手率 5%-15%, 涨幅 2%-5%
-
-### 5. 低吸抄底
-跌幅 2%-7%, 换手率 2%-10%, 振幅 <=8%
-
-### 6. 突破追涨
-涨幅 4%-8%, 换手率 8%-20%, 收盘强度 >=95%
+**已知局限**: 中文名识别不准（尤其截图模糊时），建议后续升级 AI 模型或加手动编辑界面。
 
 ---
 
-## 六、图片识别持仓
+## 九、Web 面板前端（纯 HTML/CSS/JS，无框架）
 
-四层回退策略：
-1. **千问 VL** (qwen-vl-max) — 最准，需 API Key
-2. **Tesseract OCR 原始** — 直接识别
-3. **Tesseract OCR 增强** — 灰度+对比度+锐化
-4. **Tesseract OCR 模糊匹配** — 多PSM模式+宽松正则
+`deploy/app.py` 的 `dashboard()` 返回完整 HTML，包含：
+- **6 策略按钮**（3列2行网格布局）
+- 推荐列表渲染（评分/换手/成交额/涨跌幅）
+- 持仓分析卡片（卖/警戒/持有 三色边框）
+- 板块热度标签
+- 截图上传区
+- Toast 通知
 
-API Key: `sk-2ef7c48f2b484c579127a367215bc74e` (千问 DashScope)
-
-识别后自动数据校验：代码格式(6位数字)、成本范围(0.5-5000)、股数范围(100-10000000)
-
----
-
-## 七、当前持仓（5/14 收盘）
-
-| 代码 | 名称 | 股数 | 成本 | 现价 | 盈亏 |
-|------|------|------|------|------|------|
-| 300394 | 天孚通信 | 1000 | 373.54 | ~400 | +7% |
-| 301308 | 江波龙 | 200 | 393.76 | ~614 | +56% |
-| 600330 | 天通股份 | 6000 | 34.38 | ~34 | -0.1% |
-| 002342 | 巨力索具 | 8700 | 24.87 | ~19 | -23% |
-
-总市值 ~89万，可用 ~19万，总资产 ~108万
+JavaScript 关键函数：
+- `runMode(mode)` — 调用 API 并渲染
+- `getApi(mode)` — 区分 `/api/` vs `/api/strategy/` 路径
+- `render(d)` — 统一渲染引擎（处理 6 种 type）
+- `doUpload(inp)` — 截图上传 + 自动刷新持仓
 
 ---
 
-## 八、已知问题
+## 十、已知问题
 
-1. **量比数据缺失** — Sina API 不返量比，一夜持股已跳过
-2. **流通市值不可靠** — 已从一夜持股移除
-3. **收盘后评分偏低** — 阈值已从65降到48，盘中会升高
-4. **截图识别中文名偶尔不准** — 已加数据校验层
-5. **SSH 端口不稳定** — 需阿里云安全组开放22端口
+1. ~~Sina API 在服务器不可用~~ → 已加腾讯数据源回退
+2. ~~Eastmoney API 在服务器不可用~~ → 同上
+3. 量比数据缺失 — Sina/Tencent 均不返回量比
+4. 截图识别中文名偶尔不准 — 需优化 AI 模型
+5. auto_morning.py cron 依赖主机 Python3 环境 — 未来可迁移到 Docker 内执行
 
 ---
 
-## 九、下一步计划
+## 十一、环境变量 (.env)
 
-1. 明天验证一夜持股三只（筑博设计/海昌新材/广东明珠）
-2. 加入北向资金/龙虎榜数据
-3. QQ/微信推送通知
-4. 移动端 WebView App
-5. 持续优化一夜持股参数
+服务器 `/opt/quant/.env` 需配置：
+```
+QWEN_API_KEY=sk-xxx          # 千问 API Key（截图识别用）
+QWEN_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen-vl-max
+DEPLOY_HOST=47.113.189.191
+DEPLOY_USER=root
+DEPLOY_PASSWORD=xxx
+DB_ENABLED=false
+```
+
+---
+
+## 十二、下一步计划
+
+1. 优化截图识别（换更强模型 或 加手动编辑 UI）
+2. 将 auto_morning.py 迁移到 Docker 内执行
+3. 移动端适配 / PWA
+4. 加入北向资金/龙虎榜数据
+5. 推送通知（微信/QQ）
