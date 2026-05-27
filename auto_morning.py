@@ -10,7 +10,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
 
-from src.fast_fetcher import fetch_realtime_quotes
+from src import fetch_realtime_quotes
 from src.stock_filter import load_and_clean, build_watchlist, sector_strength_analysis, calculate_score_v2, filter_momentum_stocks
 from src.risk_control import assess_risks
 from src.strategy import generate_morning_recommendation, generate_buy_signals, get_positions

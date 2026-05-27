@@ -30,18 +30,66 @@ def _save_json(path, data):
 
 
 def get_positions():
-    """获取当前持仓列表"""
+    """获取当前持仓列表（DB 优先，失败回退 JSON）"""
+    from config import DB_ENABLED
+    if DB_ENABLED:
+        try:
+            from src.db import load_trades as db_load_trades
+            result = db_load_trades()
+            if result:
+                return result
+        except Exception:
+            pass
     return _load_json(TRADE_FILE)
 
 
 def get_trade_history():
-    """获取历史交易"""
+    """获取历史交易（DB 优先，失败回退 JSON）"""
+    from config import DB_ENABLED
+    if DB_ENABLED:
+        try:
+            from src.db import load_trade_history as db_load_history
+            result = db_load_history()
+            if result:
+                return result
+        except Exception:
+            pass
     return _load_json(TRADE_HISTORY_FILE)
 
 
 # ============================================================
 # 买入信号生成
 # ============================================================
+
+def _calculate_kelly_fraction():
+    """
+    从历史交易计算 Kelly 仓位比例
+
+    Kelly f = W - ((1-W) / R)
+    其中 W = 胜率, R = 平均盈利/平均亏损
+
+    返回：
+        float: Kelly 仓位比例，限制在 [0.01, 0.25]
+    """
+    stats = get_performance_stats()
+    if stats['total_trades'] < 10:
+        return 0.10  # 历史数据不足，使用保守 10%
+
+    closed = [t for t in get_trade_history() if 'pnl_pct' in t]
+    wins = [t['pnl_pct'] for t in closed if t['pnl_pct'] > 0]
+    losses = [abs(t['pnl_pct']) for t in closed if t['pnl_pct'] <= 0]
+
+    if not losses or len(wins) < 3:
+        return 0.10
+
+    win_rate = len(wins) / len(closed)
+    avg_win = sum(wins) / len(wins) if wins else 1.0
+    avg_loss = sum(losses) / len(losses) if losses else 1.0
+    R = avg_win / avg_loss if avg_loss > 0 else 1.0
+
+    kelly = win_rate - ((1 - win_rate) / R)
+    return max(0.01, min(0.25, kelly))  # 限制 1%-25%
+
 
 def generate_buy_signals(watchlist, positions=None):
     """
@@ -55,6 +103,8 @@ def generate_buy_signals(watchlist, positions=None):
     5. 不与现有持仓重复
     6. 不超过最大持仓数
 
+    仓位计算：Kelly 公式 → 百分比仓位 → 最终金额 → 整数手
+
     返回：买入信号列表 [{code, name, price, score, risk, reason}]
     """
     if watchlist is None or watchlist.empty:
@@ -64,6 +114,18 @@ def generate_buy_signals(watchlist, positions=None):
     positions = positions or get_positions()
     held_codes = {p['code'] for p in positions if p.get('status') == 'open'}
     max_new = params['max_positions'] - len([p for p in positions if p.get('status') == 'open'])
+
+    # 计算动态仓位比例
+    capital = params.get('account_capital', 500000)
+    if params.get('use_kelly', False):
+        kelly_frac = _calculate_kelly_fraction()
+        position_pct = kelly_frac * params.get('kelly_fraction', 0.5)
+    else:
+        position_pct = params.get('position_pct', 0.10)
+
+    position_amount = capital * position_pct
+    position_amount = max(position_amount, params.get('min_position_amount', 10000))
+    position_amount = min(position_amount, capital * 0.20)  # 单只不超过 20%
 
     signals = []
 
@@ -93,8 +155,8 @@ def generate_buy_signals(watchlist, positions=None):
         if price <= 0:
             continue
 
-        # 计算建议买入量
-        shares = int(params['position_size'] / price / 100) * 100
+        # 百分比仓位计算买入量
+        shares = int(position_amount / price / 100) * 100
         if shares < 100:
             continue
 
@@ -108,6 +170,7 @@ def generate_buy_signals(watchlist, positions=None):
             'risk_detail': str(row.get('risk_detail', '')),
             'shares': shares,
             'cost': round(price * shares, 2),
+            'position_pct': round(position_pct * 100, 1),
             'reason': str(row.get('reason', f'评分{score:.0f}+{risk}')),
         })
 
@@ -235,7 +298,7 @@ def generate_sell_signals(positions, quotes_df):
 
 def execute_paper_trade(signal, direction='buy'):
     """
-    执行一笔模拟交易，记录到 trades.json / trade_history.json
+    执行一笔模拟交易，记录到 DB 或 trades.json / trade_history.json
 
     参数：
         signal: {code, name, price, shares, reason, ...}
@@ -266,6 +329,15 @@ def execute_paper_trade(signal, direction='buy'):
         }
         trades.append(trade)
 
+        # DB 持久化（仅当启用时）
+        from config import DB_ENABLED
+        if DB_ENABLED:
+            try:
+                from src.db import save_trade
+                save_trade(trade, direction='buy')
+            except Exception:
+                pass
+
     elif direction == 'sell':
         # 找到对应持仓并在 history 中记录盈亏
         target = None
@@ -290,6 +362,23 @@ def execute_paper_trade(signal, direction='buy'):
         trades = [t for t in trades if t.get('status') != 'closed']
 
         trade = target
+
+        # DB 持久化（仅当启用时）
+        from config import DB_ENABLED as _db_enabled
+        if _db_enabled:
+            sell_dict = {
+                'code': signal['code'],
+                'now_price': signal['now_price'],
+                'close_date': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                'pnl_pct': round(signal['pnl_pct'], 2),
+                'pnl_amount': round(signal['pnl_amount'], 2),
+                'reason': signal.get('reason', ''),
+            }
+            try:
+                from src.db import save_trade
+                save_trade(sell_dict, direction='sell')
+            except Exception:
+                pass
 
     _save_json(TRADE_FILE, trades)
     _save_json(TRADE_HISTORY_FILE, history)

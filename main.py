@@ -7,10 +7,7 @@ import datetime
 from config import *
 
 # === 数据抓取 ===
-try:
-    from src.fast_fetcher import fetch_realtime_quotes
-except ImportError:
-    from src.data_fetcher import fetch_realtime_quotes
+from src import fetch_realtime_quotes
 
 # === 选股 ===
 from src.stock_filter import build_watchlist, calculate_score_v2, filter_momentum_stocks
@@ -63,11 +60,22 @@ def run():
         save_log(f"清洗失败: {e}")
         sys.exit(1)
 
-    # --- 第三步：强势股筛选 + V2评分 ---
-    print_section("第三步：强势股筛选 + V2增强评分")
+    # --- 第三步：市场状态识别 ---
+    print_section("第三步：市场状态识别")
+    try:
+        from src.market_regime import get_regime_weights
+        regime_weights, regime, regime_conf, regime_metrics = get_regime_weights()
+        print(f"  当前市场状态: {regime} (置信度: {regime_conf})")
+        print(f"  {regime_metrics['reason']}")
+    except Exception as e:
+        print(f"  [WARN] 市场状态识别失败，使用默认权重: {e}")
+        regime_weights, regime = SCORE_WEIGHTS_V2, 'range'
+
+    # --- 第四步：强势股筛选 + V2评分 ---
+    print_section("第四步：强势股筛选 + V2增强评分")
     try:
         watchlist = build_watchlist(df_clean)
-        watchlist = calculate_score_v2(watchlist)
+        watchlist = calculate_score_v2(watchlist, weights=regime_weights)
         watchlist = filter_momentum_stocks(watchlist)
         print(f"  [OK] 入选 {len(watchlist)} 只")
     except Exception as e:
@@ -75,8 +83,8 @@ def run():
         save_log(f"筛选失败: {e}")
         watchlist = df_clean.iloc[:0]
 
-    # --- 第四步：风险评估 ---
-    print_section("第四步：风险评估")
+    # --- 第五步：风险评估 ---
+    print_section("第五步：风险评估")
     try:
         watchlist = assess_risks(watchlist)
         print(f"  [OK] 风险评估完成")
@@ -84,12 +92,12 @@ def run():
         print(f"  [ERROR] 风险评估失败: {e}")
         save_log(f"风险评估失败: {e}")
 
-    # --- 第五步：生成 Reason ---
-    print_section("第五步：生成入选理由")
+    # --- 第六步：生成 Reason ---
+    print_section("第六步：生成入选理由")
     watchlist = generate_reason(watchlist)
 
-    # --- 第六步：策略信号 ---
-    print_section("第六步：策略信号生成")
+    # --- 第七步：策略信号 ---
+    print_section("第七步：策略信号生成")
     try:
         positions = get_positions()
         buy_signals = generate_buy_signals(watchlist, positions)
@@ -105,8 +113,8 @@ def run():
         print(f"  [WARN] 策略信号生成: {e}")
         buy_signals, sell_signals, morning_recs = [], [], []
 
-    # --- 第七步：输出 Excel ---
-    print_section("第七步：导出 Excel")
+    # --- 第八步：输出 Excel ---
+    print_section("第八步：导出 Excel")
     try:
         excel_path = export_to_excel(watchlist, df_clean)
         print(f"  [OK] {excel_path}")

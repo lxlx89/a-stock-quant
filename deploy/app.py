@@ -31,7 +31,7 @@ def _safe_json(obj):
 
 
 def _run_pipeline():
-    from src.fast_fetcher import fetch_realtime_quotes
+    from src import fetch_realtime_quotes
     from src.stock_filter import load_and_clean, build_watchlist, calculate_score_v2, filter_momentum_stocks
     from src.risk_control import assess_risks
     df = fetch_realtime_quotes()

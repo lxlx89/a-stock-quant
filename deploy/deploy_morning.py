@@ -4,9 +4,11 @@
 import paramiko
 import os
 
-HOST = "47.113.189.191"
-USER = "root"
-PASS = "Liu050705"
+import os
+
+HOST = os.getenv("DEPLOY_HOST", "47.113.189.191")
+USER = os.getenv("DEPLOY_USER", "root")
+PASS = os.getenv("DEPLOY_PASSWORD", "")
 REMOTE_DIR = "/opt/quant"
 
 # 本地要上传的文件/目录

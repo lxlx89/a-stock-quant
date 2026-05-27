@@ -5,6 +5,16 @@
 """
 
 import os
+from pathlib import Path
+
+# ---- 加载 .env 文件（优先系统环境变量，其次 .env 文件） ----
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+except ImportError:
+    pass  # python-dotenv 未安装时依赖系统环境变量
 
 # =============================================
 # 路径配置
@@ -25,10 +35,19 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # AKShare 实时行情接口
 DATA_FETCHER_FUNC = 'stock_zh_a_spot_em'   # 目前使用这个接口获取全市场行情
 
+# 数据源 Fallback 顺序: sina -> eastmoney -> cache
+DATA_SOURCE_ORDER = ['sina', 'eastmoney', 'cache']
+DATA_CACHE_FILE = os.path.join(BASE_DIR, 'data', 'cache', 'last_quotes.parquet')
+DATA_CACHE_MAX_AGE_HOURS = 4  # 缓存数据最大有效期（小时）
+
 # =============================================
-# 代理白名单配置（需要直连的域名）
+# 代理配置
 # =============================================
-# 如果你使用代理软件，请将这些域名加入直连/代理例外
+# 设为 False 可让所有财经 API 请求绕过系统代理
+# 如果你的代理不稳定，建议设为 False
+REQUESTS_TRUST_ENV = False
+
+# 代理例外域名列表
 PROXY_BYPASS_DOMAINS = [
     'eastmoney.com',
     'push2.eastmoney.com',
@@ -36,14 +55,16 @@ PROXY_BYPASS_DOMAINS = [
     'quote.eastmoney.com',
     'data.eastmoney.com',
     'dfcfw.com',
+    'sina.com.cn',
+    'sinaimg.cn',
 ]
 
 # =============================================
 # AI API 配置（截图识别用）
 # =============================================
-QWEN_API_KEY = 'sk-2ef7c48f2b484c579127a367215bc74e'        # 千问 API Key ← 填这里
-QWEN_API_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-QWEN_MODEL = 'qwen-vl-max'                    # 视觉模型
+QWEN_API_KEY = os.getenv('QWEN_API_KEY', '')              # 千问 API Key → 填入 .env 文件
+QWEN_API_URL = os.getenv('QWEN_API_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+QWEN_MODEL = os.getenv('QWEN_MODEL', 'qwen-vl-max')            # 视觉模型
 
 # =============================================
 # BaoStock 配置（仅用于历史数据和回测）
@@ -142,7 +163,16 @@ SELL_RULES = {
 # 模拟盘交易参数 [NEW]
 # =============================================
 TRADING_PARAMS = {
-    'position_size': 50000,       # 单只股票买入金额上限（元）
+    # 账户感知仓位（替代固定 position_size）
+    'account_capital': 500000,     # 账户总资金（元）
+    'position_pct': 0.10,          # 每只股票最大仓位占比（普通模式）
+    'min_position_amount': 10000,  # 最低买入金额（低于此不买）
+
+    # Kelly 公式（启用后覆盖 position_pct）
+    'use_kelly': True,             # 启用 Kelly 公式动态仓位
+    'kelly_fraction': 0.5,         # 半-Kelly（保守），0.25=四分之一Kelly
+    'kelly_win_rate': None,        # None=从 trade_history.json 自动计算
+
     'max_positions': 8,           # 最大同时持仓数
     'min_score': 55,              # 最低买入评分（收盘后偏低，盘中将上涨）
     'max_risk': '中风险',         # 最高可接受的买入风险等级
@@ -199,9 +229,42 @@ OVERNIGHT_RULES = {
 }
 
 # =============================================
+# 市场状态识别配置
+# =============================================
+REGIME_LOOKBACK_DAYS = 20  # 趋势计算回溯天数
+
+# 市场状态权重调整
+# bull(牛市): 加重动量因子（涨跌幅、量比、趋势强度）
+# bear(熊市): 加重安全因子（振幅稳定、市值适配、成交额）
+# range(震荡): 不做调整
+REGIME_WEIGHT_ADJUSTMENTS = {
+    'bull': {
+        '涨跌幅': +5, '量比': +5, '趋势强度': +5,
+        '振幅_稳定': -3, '市值适配': -3,
+    },
+    'bear': {
+        '涨跌幅': -5, '量比': -5,
+        '振幅_稳定': +8, '市值适配': +5, '成交额': +5,
+    },
+    'range': {
+        # 震荡市不调整
+    },
+}
+
+# =============================================
 # 板块强度配置
 # =============================================
 SECTOR_STRENGTH_MIN_STOCKS = 3   # 板块内至少有 3 只股票入选才算有效板块
+
+# =============================================
+# 数据库配置（默认关闭，启用需设置 DB_ENABLED=true）
+# =============================================
+DB_ENABLED = os.getenv('DB_ENABLED', 'false').lower() == 'true'
+DB_HOST = os.getenv('POSTGRES_HOST', 'localhost')
+DB_PORT = int(os.getenv('POSTGRES_PORT', '5432'))
+DB_NAME = os.getenv('POSTGRES_DB', 'stockdb')
+DB_USER = os.getenv('POSTGRES_USER', 'quant')
+DB_PASSWORD = os.getenv('POSTGRES_PASSWORD', '')
 
 # =============================================
 # Excel 输出配置

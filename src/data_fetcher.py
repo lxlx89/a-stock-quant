@@ -11,34 +11,47 @@ import time
 import warnings
 import ssl
 import requests
-from config import DATA_FETCHER_FUNC, PROXY_BYPASS_DOMAINS
+from config import DATA_FETCHER_FUNC, PROXY_BYPASS_DOMAINS, REQUESTS_TRUST_ENV
 
 warnings.filterwarnings('ignore')
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 解决东方财富等财经网站的弱 SSL 证书问题
-# Python 3.10+ 对弱密钥证书的验证更严格
-_original_request = requests.Session.request
+
+def _is_finance_url(url):
+    """判断 URL 是否属于财经类域名"""
+    if not isinstance(url, str):
+        return False
+    for domain in PROXY_BYPASS_DOMAINS:
+        if domain in url:
+            return True
+    return False
+
+
+# 全局 patch：让财经域名绕过代理 + 降低 SSL 验证
+_original_session_init = requests.Session.__init__
+_original_session_request = requests.Session.request
+
+def _patched_session_init(self, *args, **kwargs):
+    _original_session_init(self, *args, **kwargs)
+    # 默认不信任系统代理（可用 REQUESTS_TRUST_ENV 覆盖）
+    if not REQUESTS_TRUST_ENV and 'trust_env' not in kwargs:
+        self.trust_env = False
 
 def _patched_request(self, method, url, *args, **kwargs):
-    """为财经类域名降低 SSL 验证级别"""
-    verify = kwargs.get('verify', True)
-    if verify and isinstance(url, str):
-        for domain in PROXY_BYPASS_DOMAINS:
-            if domain in url:
-                # 为这些域名创建允许弱证书的 SSL 上下文
-                kwargs['verify'] = False
-                break
-    return _original_request(self, method, url, *args, **kwargs)
+    """财经域名：强制禁用代理 + 跳过 SSL 验证"""
+    if _is_finance_url(url):
+        kwargs['verify'] = False
+        kwargs['proxies'] = {'http': None, 'https': None}  # 强制覆盖，不走代理
+    return _original_session_request(self, method, url, *args, **kwargs)
 
+requests.Session.__init__ = _patched_session_init
 requests.Session.request = _patched_request
 
 
 def clear_proxy_env():
     """
-    清除代理环境变量
-    让 requests 不走系统代理，直接连接
+    清除代理环境变量 + 设置 NO_PROXY 包含财经域名
     """
     proxy_keys = [
         'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy',
@@ -49,6 +62,12 @@ def clear_proxy_env():
         val = os.environ.pop(key, None)
         if val is not None:
             saved[key] = val
+
+    # 设置 NO_PROXY 让 akshare 底层的 requests 不走代理
+    bypass_hosts = ','.join(PROXY_BYPASS_DOMAINS)
+    os.environ['NO_PROXY'] = bypass_hosts
+    os.environ['no_proxy'] = bypass_hosts
+
     return saved
 
 
@@ -56,15 +75,19 @@ def restore_proxy_env(saved):
     """恢复代理环境变量"""
     for key, val in saved.items():
         os.environ[key] = val
+    # 清理我们设置的 NO_PROXY
+    for key in ['NO_PROXY', 'no_proxy']:
+        if key in os.environ and key not in saved:
+            del os.environ[key]
 
 
-def fetch_realtime_quotes():
+def fetch_realtime_quotes_eastmoney():
     """
-    从 AKShare 获取 A 股实时行情（全市场）
+    从 AKShare/东方财富 获取 A 股实时行情（全市场）
 
     返回：
-        pandas.DataFrame: 包含全市场股票实时行情
-        字段包括：代码、名称、最新价、涨跌幅、涨跌额、成交量、成交额等
+        (pandas.DataFrame, None): 成功时
+        (None, str): 失败时
 
     注意：
         - 不接券商交易接口，仅数据展示
@@ -108,30 +131,21 @@ def fetch_realtime_quotes():
         elapsed = time.time() - start_time
         print(f"  抓取完成，耗时 {elapsed:.1f} 秒")
 
-        return df
+        return df, None
 
     except ImportError:
-        raise RuntimeError(
-            "未安装 akshare 库，请运行: pip install akshare"
-        )
+        return None, "未安装 akshare 库，请运行: pip install akshare"
     except Exception as e:
         error_msg = str(e)
         if 'ProxyError' in error_msg or 'Unable to connect' in error_msg:
-            raise RuntimeError(
+            return None, (
                 f"AKShare 数据抓取失败（代理问题）: {e}\n\n"
                 "请在代理软件中将以下域名加入直连/代理例外:\n"
                 "  eastmoney.com\n"
                 "  push2.eastmoney.com\n"
-                "  push2his.eastmoney.com\n"
-                "  quote.eastmoney.com\n"
-                "  data.eastmoney.com\n"
-                "  dfcfw.com\n\n"
-                "Clash 配置示例:\n"
-                "  DOMAIN-SUFFIX,eastmoney.com,DIRECT\n"
-                "  DOMAIN-SUFFIX,dfcfw.com,DIRECT"
             )
         else:
-            raise RuntimeError(f"AKShare 数据抓取失败: {e}")
+            return None, f"AKShare 数据抓取失败: {e}"
 
 
 def fetch_history_kline(code, period='daily', start_date=None, end_date=None):

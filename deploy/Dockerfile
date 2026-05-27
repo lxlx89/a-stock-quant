@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc g++ && rm -rf /var/lib/apt/lists/*
 
 # Python 依赖
-COPY requirements.txt .
+COPY deploy/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 应用代码

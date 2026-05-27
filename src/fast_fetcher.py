@@ -227,7 +227,7 @@ def _convert_to_dataframe(raw_data):
     return df
 
 
-def fetch_realtime_quotes():
+def fetch_realtime_quotes_sina():
     """
     快速获取 A 股全市场实时行情（Sina 数据源）
 
@@ -235,40 +235,74 @@ def fetch_realtime_quotes():
     10 线程并行抓取，预期耗时 < 5 秒。
 
     返回：
-        pandas.DataFrame: 全市场股票实时行情（字段兼容原 data_fetcher）
+        (pandas.DataFrame, None): 成功时返回数据和 None
+        (None, str): 失败时返回 None 和错误信息
     """
     print("  正在从 Sina 快速抓取全市场实时行情...")
     print("  （10 线程并行，预计 < 5 秒）")
 
     start_time = time.time()
 
-    # 第一步：获取股票代码列表（优先缓存）
-    codes_cached = _load_cached_codes()
-    if codes_cached:
-        print(f"  [缓存] 使用缓存的 {len(codes_cached)} 个股票代码")
-    else:
-        print("  [缓存] 未命中，正在获取代码列表...")
-        _fetch_page(1)  # 预热
-        codes_cached = ['warmup']  # 占位
+    try:
+        # 第一步：获取股票代码列表（优先缓存）
+        codes_cached = _load_cached_codes()
+        if codes_cached:
+            print(f"  [缓存] 使用缓存的 {len(codes_cached)} 个股票代码")
+        else:
+            print("  [缓存] 未命中，正在获取代码列表...")
+            _fetch_page(1)  # 预热
+            codes_cached = ['warmup']  # 占位
 
-    # 第二步：并行抓取全量数据
-    raw_data = _fetch_all_pages()
+        # 第二步：并行抓取全量数据
+        raw_data = _fetch_all_pages()
 
-    if not raw_data:
-        raise RuntimeError(
-            "Sina 数据抓取失败，请检查网络连接\n"
-            "代理用户请将 sina.com.cn 加入直连白名单"
-        )
+        if not raw_data:
+            return (None,
+                "Sina 数据抓取失败，请检查网络连接\n"
+                "代理用户请将 sina.com.cn 加入直连白名单"
+            )
 
-    # 第三步：转换为 DataFrame
-    df = _convert_to_dataframe(raw_data)
+        # 第三步：转换为 DataFrame
+        df = _convert_to_dataframe(raw_data)
 
-    # 缓存代码列表
-    if '代码' in df.columns:
-        codes = df['代码'].tolist()
-        _save_cached_codes(codes)
+        # 缓存代码列表
+        if '代码' in df.columns:
+            codes = df['代码'].tolist()
+            _save_cached_codes(codes)
 
-    elapsed = time.time() - start_time
-    print(f"  抓取完成，耗时 {elapsed:.1f} 秒（{len(df)} 只股票）")
+        elapsed = time.time() - start_time
+        print(f"  抓取完成，耗时 {elapsed:.1f} 秒（{len(df)} 只股票）")
 
-    return df
+        return df, None
+
+    except Exception as e:
+        return None, f"Sina 数据源异常: {e}"
+
+
+def fetch_realtime_quotes_cache():
+    """
+    从本地缓存加载最近一次成功抓取的行情数据
+
+    返回：
+        (pandas.DataFrame, None): 缓存有效时
+        (None, str): 缓存不存在或已过期时
+    """
+    import pandas as pd
+    from config import DATA_CACHE_FILE, DATA_CACHE_MAX_AGE_HOURS
+
+    cache_file = DATA_CACHE_FILE
+    if not os.path.exists(cache_file):
+        return None, "缓存文件不存在"
+
+    age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+    if age_hours > DATA_CACHE_MAX_AGE_HOURS:
+        return None, f"缓存已过期（{age_hours:.1f}小时 > {DATA_CACHE_MAX_AGE_HOURS}小时）"
+
+    try:
+        df = pd.read_parquet(cache_file)
+        if df is not None and not df.empty:
+            print(f"  [Cache] 从缓存加载 {len(df)} 只股票（{age_hours:.1f}小时前）")
+            return df, None
+        return None, "缓存文件为空"
+    except Exception as e:
+        return None, f"缓存读取失败: {e}"

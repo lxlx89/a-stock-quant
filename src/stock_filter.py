@@ -417,7 +417,7 @@ def sector_strength_analysis(df):
 # V2 增强评分
 # ============================================================
 
-def calculate_score_v2(df):
+def calculate_score_v2(df, weights=None):
     """
     增强版综合评分 — 7个维度
 
@@ -425,11 +425,16 @@ def calculate_score_v2(df):
     - 量比：大于1表示放量，放量上涨更健康
     - 趋势强度：(最新价-开盘价)/开盘价，日内持续走强
     - 市值适配：中等市值（50-500亿）得分更高，过小或过大扣分
+
+    参数：
+        df: 股票数据
+        weights: 可选的评分权重 dict，为 None 时使用默认 SCORE_WEIGHTS_V2
     """
     if df is None or df.empty:
         return df
 
-    weights = SCORE_WEIGHTS_V2
+    if weights is None:
+        weights = SCORE_WEIGHTS_V2
 
     def normalize(series, higher_is_better=True):
         if series.max() == series.min():

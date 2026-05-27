@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: quant
-      POSTGRES_PASSWORD: quant2026
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant2026}
       POSTGRES_DB: stockdb
     volumes:
       - pgdata:/var/lib/postgresql/data

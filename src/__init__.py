@@ -1,10 +1,9 @@
 """src 包初始化文件"""
 
-# 快速抓取模块优先
-from .fast_fetcher import fetch_realtime_quotes as _fast_fetch_realtime
-
-# 传统 AKShare 抓取
+# 数据源内部函数
+from .fast_fetcher import fetch_realtime_quotes_sina, fetch_realtime_quotes_cache
 from .data_fetcher import (
+    fetch_realtime_quotes_eastmoney,
     fetch_history_kline,
     fetch_baostock_history,
     fetch_sector_data,
@@ -12,8 +11,49 @@ from .data_fetcher import (
     fetch_realtime_by_codes,
 )
 
-# fetch_realtime_quotes 优先使用快速版本
-fetch_realtime_quotes = _fast_fetch_realtime
+
+def fetch_realtime_quotes():
+    """
+    多数据源 Fallback 获取 A 股全市场实时行情
+
+    Fallback 链：Sina（快，~5s）→ AKShare/Eastmoney（慢，~30s）→ 缓存
+
+    返回：
+        pandas.DataFrame: 全市场股票实时行情
+    """
+    import os
+    from config import DATA_SOURCE_ORDER, DATA_CACHE_FILE
+
+    sources = {
+        'sina': fetch_realtime_quotes_sina,
+        'eastmoney': fetch_realtime_quotes_eastmoney,
+        'cache': fetch_realtime_quotes_cache,
+    }
+
+    for source_name in DATA_SOURCE_ORDER:
+        if source_name not in sources:
+            continue
+        print(f"  尝试数据源: {source_name}...")
+        try:
+            df, err = sources[source_name]()
+            if df is not None and not df.empty:
+                print(f"  [OK] 数据源 {source_name} 成功，获取 {len(df)} 只股票")
+                # 在线数据源成功后缓存
+                if source_name != 'cache':
+                    try:
+                        os.makedirs(os.path.dirname(DATA_CACHE_FILE), exist_ok=True)
+                        df.to_parquet(DATA_CACHE_FILE, index=False)
+                    except Exception:
+                        pass  # 缓存失败不阻断
+                return df
+            else:
+                print(f"  [WARN] 数据源 {source_name} 失败: {err}")
+        except Exception as e:
+            print(f"  [WARN] 数据源 {source_name} 异常: {e}")
+
+    raise RuntimeError("所有数据源均失败，无法获取行情数据")
+
+
 from .stock_filter import (
     load_and_clean,
     build_watchlist,
@@ -48,7 +88,7 @@ from .strategy import (
 )
 
 __all__ = [
-    # data_fetcher
+    # data_fetcher / unified
     'fetch_realtime_quotes',
     'fetch_history_kline',
     'fetch_baostock_history',
