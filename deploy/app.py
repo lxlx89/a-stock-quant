@@ -712,7 +712,7 @@ body{
 
 <div class="toast" id="toast"></div>
 
-<!-- 三策略面板 -->
+<!-- 六策略面板 -->
 <div class="panel">
   <button class="panel-btn active" id="btn-morning" onclick="runMode('morning')">
     <span class="icon">☼</span>早盘推荐
@@ -722,6 +722,15 @@ body{
   </button>
   <button class="panel-btn" id="btn-overnight" onclick="runMode('overnight')">
     <span class="icon">☽</span>一夜持股
+  </button>
+  <button class="panel-btn" id="btn-high-turnover" onclick="runMode('high-turnover')">
+    <span class="icon">&#8593;</span>高换手猎手
+  </button>
+  <button class="panel-btn" id="btn-oversold-bounce" onclick="runMode('oversold-bounce')">
+    <span class="icon">&#8595;</span>低吸抄底
+  </button>
+  <button class="panel-btn" id="btn-breakout" onclick="runMode('breakout')">
+    <span class="icon">&#8649;</span>突破追涨
   </button>
 </div>
 
@@ -750,10 +759,14 @@ function T(m){var d=document.getElementById('toast');d.textContent=m;d.style.dis
 
 function setActive(m){
   active=m;
-  ['morning','midday','overnight'].forEach(function(x){
+  ['morning','midday','overnight','high-turnover','oversold-bounce','breakout'].forEach(function(x){
     var b=document.getElementById('btn-'+x);
     b.className='panel-btn'+(x===m?' active':'');
   });
+}
+
+function getApi(mode){
+  return (mode==='high-turnover'||mode==='oversold-bounce'||mode==='breakout')?'/api/strategy/'+mode:'/api/'+mode;
 }
 
 function render(d){
@@ -828,12 +841,13 @@ async function runMode(mode){
   setActive(mode);
   document.getElementById('content').innerHTML='<div class="empty">分析中...</div>';
   try{
-    var r=await fetch('/api/'+mode,{method:'POST'});
+    var r=await fetch(getApi(mode),{method:'POST'});
     var d=await r.json();
     if(d.status==='error'){T(d.message);return}
     render(d);
     document.getElementById('btn-'+mode).classList.add('scanned');
-    T({morning:'早盘推荐',midday:'午间分析',overnight:'一夜持股'}[mode]+'完成');
+    var labels={morning:'早盘推荐',midday:'午间分析',overnight:'一夜持股','high-turnover':'高换手猎手','oversold-bounce':'低吸抄底','breakout':'突破追涨'};
+    T(labels[mode]+'完成');
   }catch(e){document.getElementById('content').innerHTML='<div class="empty">网络错误</div>'}
 }
 
