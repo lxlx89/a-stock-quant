@@ -8,3 +8,4 @@ baostock>=0.8.8
 python-dotenv>=1.0.0
 psycopg2-binary>=2.9.0
 python-multipart>=0.0.9
+akshare>=1.10.0
